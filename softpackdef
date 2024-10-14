@@ -1,0 +1,70 @@
+#!/bin/bash
+
+set -euo pipefail;
+
+declare SINGULARITY="/software/singularity/3.11.4/bin/singularity";
+
+softpackModuleFromPath() {
+	while read path; do
+		if [ -f "$path/singularity.sif" ]; then
+			echo "${path:32:-8}";
+
+			return 0;
+		fi;
+	done < <(echo "${PATH:-}" | tr ':' '\n' | sed -e 's@///*@/@' -e 's@/$@@' | grep "^/software/hgi/softpack/installs/\(groups\|users\)/[^/]\+/[^/]\+/[^/]\+-scripts$");
+
+	return 1;
+}
+
+printHelp() {
+	declare ERROR="${1:-}";
+	declare EXIT=0;
+
+	if [ -n "$ERROR" ]; then
+		echo -e "$ERROR\n";
+		EXIT=1;
+	fi;
+
+	cat <<HEREDOC
+Usage: $0 [--docker] [$(softpackModuleFromPath || echo "HGI/softpack/path/to/env/version")]
+
+This script generates either a singularity definition file (default) or a Dockerfile for a SoftPack module.
+
+  -h,--help    Display this help.
+  -d,--docker  Generate a Dockerfile instead of a singularity.def file.
+HEREDOC
+
+	exit $EXIT;
+}
+
+declare DOCKER=false;
+declare SOFTPACK="";
+
+while [ $# -gt 0 ]; do
+	case "$1" in
+	"-h"|"--help")
+		printHelp;;
+	"-d"|"--docker")
+		DOCKER=true;;
+	*)
+		if [ -n "$SOFTPACK" ]; then
+			printHelp "Can only specify one module.";
+		fi;
+
+		SOFTPACK="$1";
+	esac;
+
+	shift;
+done;
+
+if [ -z "$SOFTPACK" ]; then
+	SOFTPACK="$(softpackModuleFromPath || echo "")";
+fi;
+
+declare SIF="/software/hgi/softpack/installs/$SOFTPACK-scripts/singularity.sif";
+
+if [ -z "$SOFTPACK" -o ! -f "$SIF" ]; then
+	printHelp "Invalid or No SoftPack module specified.";
+fi;
+
+"$SINGULARITY" exec "$SIF" cat /.singularity.d/Singularity | grep -v "buildcache\|mirror\|/home/ubuntu/" | if $DOCKER; then sed -e 's@/opt/\([^ ]*\) /opt$@/opt/\1 /opt/\1@' | /software/hgi/installs/softpack/def/sp2d/sp2d;else cat;fi;
